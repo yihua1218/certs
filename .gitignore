@@ -1,0 +1,22 @@
+# Certificate files
+*.pem
+*.der
+*.p12
+*.key
+*.crt
+*.csr
+*.cnf
+
+# Certificate Authority files
+ca.*
+serial*
+*.attr
+*.old
+index.txt*
+
+# Passwords and sensitive information
+passwords.mk
+
+# Build and temporary files
+bootstrap
+*.log
