@@ -210,9 +210,11 @@ printca:
 	$(OPENSSL) x509 -text -in ca.pem
 
 clean:
-	@rm -f *~ *old client.csr client.key client.crt client.p12 client.pem \
-		web-server*.csr web-server*.key web-server*.crt web-server*.p12 web-server*.pem
+	@rm -f *~ *old client.csr client.key client.crt client.p12 client.pem
 
-destroycerts: clean
+web-clean:
+	@rm -f *~ *old web-server*.csr web-server*.key web-server*.crt web-server*.p12 web-server*.pem
+
+destroycerts: clean web-clean
 	rm -f *~ dh *.csr *.crt *.p12 *.der *.pem *.key index.txt* \
 			serial*  *\.0 *\.1 ca-crl.pem ca.crl
