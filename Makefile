@@ -28,7 +28,7 @@ include passwords.mk
 #
 ######################################################################
 .PHONY: all
-all: index.txt serial ca server client
+all: index.txt serial ca server client web-server.pem
 
 .PHONY: client
 client: client.pem
@@ -43,7 +43,7 @@ server: server.pem server.vrfy
 inner-server: inner-server.pem inner-server.vrfy
 
 .PHONY: verify
-verify: server.vrfy client.vrfy
+verify: server.vrfy client.vrfy $(WEB_SERVER_CERTS:.pem=.vrfy)
 
 passwords.mk: server.cnf ca.cnf client.cnf inner-server.cnf
 	@echo "PASSWORD_SERVER	= '$(shell grep output_password server.cnf | sed 's/.*=//;s/^ *//')'"		> $@
@@ -175,8 +175,33 @@ print:
 printca:
 	$(OPENSSL) x509 -text -in ca.pem
 
+######################################################################
+#
+#  Create web server certificates based on web-server*.cnf files
+#
+######################################################################
+web-server.csr web-server.key: web-server.cnf
+	$(OPENSSL) req -new -out web-server.csr -keyout web-server.key -config ./$<
+	chmod g+r web-server.key
+
+web-server.crt: ca.key ca.pem web-server.csr
+	$(OPENSSL) ca -batch -keyfile ca.key -cert ca.pem -in web-server.csr -key $(PASSWORD_CA) -out web-server.crt -extensions xpserver_ext -extfile xpextensions -config ./web-server.cnf
+
+web-server.p12: web-server.crt
+	$(OPENSSL) pkcs12 -export -in web-server.crt -inkey web-server.key -out web-server.p12 -passin pass:$(PASSWORD_SERVER) -passout pass:$(PASSWORD_SERVER)
+	chmod g+r web-server.p12
+
+web-server.pem: web-server.p12
+	$(OPENSSL) pkcs12 -in web-server.p12 -out web-server.pem -passin pass:$(PASSWORD_SERVER) -passout pass:$(PASSWORD_SERVER)
+	chmod g+r web-server.pem
+
+.PHONY: web-server.vrfy
+web-server.vrfy: ca.pem web-server.pem
+	@$(OPENSSL) verify $(PARTIAL) -CAfile ca.pem web-server.pem
+
 clean:
-	@rm -f *~ *old client.csr client.key client.crt client.p12 client.pem
+	@rm -f *~ *old client.csr client.key client.crt client.p12 client.pem \
+		web-server*.csr web-server*.key web-server*.crt web-server*.p12 web-server*.pem
 
 #
 #	Make a target that people won't run too often.
