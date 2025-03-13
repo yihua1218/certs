@@ -27,8 +27,35 @@ include passwords.mk
 #  Make the necessary files, but not client certificates.
 #
 ######################################################################
+# Find all web-server configuration files
+WEB_SERVER_CONFIGS := $(wildcard web-server*.cnf)
+WEB_SERVER_NAMES := $(basename $(WEB_SERVER_CONFIGS))
+WEB_SERVER_CERTS := $(addsuffix .pem,$(WEB_SERVER_NAMES))
+
 .PHONY: all
-all: index.txt serial ca server client web-server.pem
+all: index.txt serial ca server client web-server
+
+.PHONY: web-server
+web-server: $(WEB_SERVER_CERTS)
+
+define make-web-server-cert
+$(1).pem: $(1).p12
+	$(OPENSSL) pkcs12 -in $(1).p12 -out $(1).pem -passin pass:$(PASSWORD_SERVER) -passout pass:$(PASSWORD_SERVER)
+	chmod g+r $(1).pem
+
+$(1).p12: $(1).crt
+	$(OPENSSL) pkcs12 -export -in $(1).crt -inkey $(1).key -out $(1).p12 -passin pass:$(PASSWORD_SERVER) -passout pass:$(PASSWORD_SERVER)
+	chmod g+r $(1).p12
+
+$(1).crt: ca.key ca.pem $(1).csr
+	$(OPENSSL) ca -batch -keyfile ca.key -cert ca.pem -in $(1).csr -key $(PASSWORD_CA) -out $(1).crt -extensions xpserver_ext -extfile xpextensions -config ./$(1).cnf
+
+$(1).csr $(1).key: $(1).cnf
+	$(OPENSSL) req -new -out $(1).csr -keyout $(1).key -config ./$(1).cnf
+	chmod g+r $(1).key
+endef
+
+$(foreach cert,$(WEB_SERVER_NAMES),$(eval $(call make-web-server-cert,$(cert))))
 
 .PHONY: client
 client: client.pem
@@ -43,23 +70,36 @@ server: server.pem server.vrfy
 inner-server: inner-server.pem inner-server.vrfy
 
 .PHONY: verify
-verify: server.vrfy client.vrfy $(WEB_SERVER_CERTS:.pem=.vrfy)
+verify: server.vrfy client.vrfy $(addsuffix .vrfy,$(WEB_SERVER_NAMES))
 
-passwords.mk: server.cnf ca.cnf client.cnf inner-server.cnf
-	@echo "PASSWORD_SERVER	= '$(shell grep output_password server.cnf | sed 's/.*=//;s/^ *//')'"		> $@
-	@echo "PASSWORD_INNER	= '$(shell grep output_password inner-server.cnf | sed 's/.*=//;s/^ *//')'"	>> $@
-	@echo "PASSWORD_CA	= '$(shell grep output_password ca.cnf | sed 's/.*=//;s/^ *//')'"		>> $@
-	@echo "PASSWORD_CLIENT	= '$(shell grep output_password client.cnf | sed 's/.*=//;s/^ *//')'"		>> $@
-	@echo "USER_NAME	= '$(shell grep emailAddress client.cnf | grep '@' | sed 's/.*=//;s/^ *//')'"	>> $@
-	@echo "CA_DEFAULT_DAYS  = '$(shell grep default_days ca.cnf | sed 's/.*=//;s/^ *//')'"			>> $@
+.PHONY: debug
+debug:
+	@echo "WEB_SERVER_CONFIGS = $(WEB_SERVER_CONFIGS)"
+	@echo "WEB_SERVER_NAMES = $(WEB_SERVER_NAMES)"
+	@echo "WEB_SERVER_CERTS = $(WEB_SERVER_CERTS)"
+
+.PHONY: %.vrfy
+%.vrfy: ca.pem %.pem
+	@$(OPENSSL) verify $(PARTIAL) -CAfile ca.pem $*.pem
 
 ######################################################################
 #
 #  Diffie-Hellman parameters
 #
 ######################################################################
-dh:
-	$(OPENSSL) dhparam -out dh -2 $(DH_KEY_SIZE)
+index.txt:
+	@touch index.txt
+
+serial:
+	@echo '01' > serial
+
+passwords.mk: server.cnf ca.cnf client.cnf inner-server.cnf
+	@echo "PASSWORD_SERVER = '$(shell grep output_password server.cnf | sed 's/.*=//;s/^ *//')'"> $@
+	@echo "PASSWORD_INNER = '$(shell grep output_password inner-server.cnf | sed 's/.*=//;s/^ *//')'">> $@
+	@echo "PASSWORD_CA = '$(shell grep output_password ca.cnf | sed 's/.*=//;s/^ *//')'">> $@
+	@echo "PASSWORD_CLIENT = '$(shell grep output_password client.cnf | sed 's/.*=//;s/^ *//')'">> $@
+	@echo "USER_NAME = '$(shell grep emailAddress client.cnf | grep '@' | sed 's/.*=//;s/^ *//')'">> $@
+	@echo "CA_DEFAULT_DAYS = '$(shell grep default_days ca.cnf | sed 's/.*=//;s/^ *//')'">> $@
 
 ######################################################################
 #
@@ -84,18 +124,18 @@ ca.crl: ca.pem
 
 ######################################################################
 #
-#  Create a new server certificate, signed by the above CA.
+# Create a new server certificate
 #
 ######################################################################
 server.csr server.key: server.cnf
-	$(OPENSSL) req -new  -out server.csr -keyout server.key -config ./server.cnf
+	$(OPENSSL) req -new -out server.csr -keyout server.key -config ./server.cnf
 	chmod g+r server.key
 
 server.crt: ca.key ca.pem server.csr
-	$(OPENSSL) ca -batch -keyfile ca.key -cert ca.pem -in server.csr  -key $(PASSWORD_CA) -out server.crt -extensions xpserver_ext -extfile xpextensions -config ./server.cnf
+	$(OPENSSL) ca -batch -keyfile ca.key -cert ca.pem -in server.csr -key $(PASSWORD_CA) -out server.crt -extensions xpserver_ext -extfile xpextensions -config ./server.cnf
 
 server.p12: server.crt
-	$(OPENSSL) pkcs12 -export -in server.crt -inkey server.key -out server.p12  -passin pass:$(PASSWORD_SERVER) -passout pass:$(PASSWORD_SERVER)
+	$(OPENSSL) pkcs12 -export -in server.crt -inkey server.key -out server.p12 -passin pass:$(PASSWORD_SERVER) -passout pass:$(PASSWORD_SERVER)
 	chmod g+r server.p12
 
 server.pem: server.p12
@@ -113,14 +153,14 @@ server.vrfy: ca.pem
 #
 ######################################################################
 client.csr client.key: client.cnf
-	$(OPENSSL) req -new  -out client.csr -keyout client.key -config ./client.cnf
+	$(OPENSSL) req -new -out client.csr -keyout client.key -config ./client.cnf
 	chmod g+r client.key
 
 client.crt: ca.key ca.pem client.csr
-	$(OPENSSL) ca -batch -keyfile ca.key -cert ca.pem -in client.csr  -key $(PASSWORD_CA) -out client.crt -extensions xpclient_ext -extfile xpextensions -config ./client.cnf
+	$(OPENSSL) ca -batch -keyfile ca.key -cert ca.pem -in client.csr -key $(PASSWORD_CA) -out client.crt -extensions xpclient_ext -extfile xpextensions -config ./client.cnf
 
 client.p12: client.crt
-	$(OPENSSL) pkcs12 -export -in client.crt -inkey client.key -out client.p12  -passin pass:$(PASSWORD_CLIENT) -passout pass:$(PASSWORD_CLIENT)
+	$(OPENSSL) pkcs12 -export -in client.crt -inkey client.key -out client.p12 -passin pass:$(PASSWORD_CLIENT) -passout pass:$(PASSWORD_CLIENT)
 	chmod g+r client.p12
 	cp client.p12 $(USER_NAME).p12
 
@@ -163,49 +203,16 @@ inner-server.vrfy: ca.pem
 #  Miscellaneous rules.
 #
 ######################################################################
-index.txt:
-	@touch index.txt
-
-serial:
-	@echo '01' > serial
-
 print:
 	$(OPENSSL) x509 -text -in server.crt
 
 printca:
 	$(OPENSSL) x509 -text -in ca.pem
 
-######################################################################
-#
-#  Create web server certificates based on web-server*.cnf files
-#
-######################################################################
-web-server.csr web-server.key: web-server.cnf
-	$(OPENSSL) req -new -out web-server.csr -keyout web-server.key -config ./$<
-	chmod g+r web-server.key
-
-web-server.crt: ca.key ca.pem web-server.csr
-	$(OPENSSL) ca -batch -keyfile ca.key -cert ca.pem -in web-server.csr -key $(PASSWORD_CA) -out web-server.crt -extensions xpserver_ext -extfile xpextensions -config ./web-server.cnf
-
-web-server.p12: web-server.crt
-	$(OPENSSL) pkcs12 -export -in web-server.crt -inkey web-server.key -out web-server.p12 -passin pass:$(PASSWORD_SERVER) -passout pass:$(PASSWORD_SERVER)
-	chmod g+r web-server.p12
-
-web-server.pem: web-server.p12
-	$(OPENSSL) pkcs12 -in web-server.p12 -out web-server.pem -passin pass:$(PASSWORD_SERVER) -passout pass:$(PASSWORD_SERVER)
-	chmod g+r web-server.pem
-
-.PHONY: web-server.vrfy
-web-server.vrfy: ca.pem web-server.pem
-	@$(OPENSSL) verify $(PARTIAL) -CAfile ca.pem web-server.pem
-
 clean:
 	@rm -f *~ *old client.csr client.key client.crt client.p12 client.pem \
 		web-server*.csr web-server*.key web-server*.crt web-server*.p12 web-server*.pem
 
-#
-#	Make a target that people won't run too often.
-#
-destroycerts:
+destroycerts: clean
 	rm -f *~ dh *.csr *.crt *.p12 *.der *.pem *.key index.txt* \
 			serial*  *\.0 *\.1 ca-crl.pem ca.crl
